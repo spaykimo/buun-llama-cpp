@@ -485,7 +485,7 @@ extern "C" void flash_prefill_forward_bf16(
         k_compute_block_scores<<<grid, block, smem, stream>>>(
             (const __nv_bfloat16 *)Q,
             (const __nv_bfloat16 *)bufs.mean_K,
-            bufs.scores,
+            (float *)bufs.scores,
             seq_len, n_heads, n_kv_heads, n_blocks, scale);
     }
 
@@ -494,7 +494,7 @@ extern "C" void flash_prefill_forward_bf16(
         dim3 grid(n_blocks, n_kv_heads);
         dim3 block(32); // one warp
         k_block_select<<<grid, block, 0, stream>>>(
-            bufs.scores, bufs.indices, bufs.counts,
+            (const float *)bufs.scores, bufs.indices, bufs.counts,
             n_blocks, n_blocks, n_kv_heads,
             cfg.attention_sink, cfg.local_window, cfg.last_n_full, cfg.alpha);
     }
