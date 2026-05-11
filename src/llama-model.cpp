@@ -2990,10 +2990,18 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                 ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, hparams.f_norm_rms_eps);
                 ml.get_key(LLM_KV_DFLASH_BLOCK_SIZE,          hparams.dflash_block_size,        false);
                 ml.get_key(LLM_KV_DFLASH_MASK_TOKEN_ID,       hparams.dflash_mask_token_id,     false);
-                ml.get_key(LLM_KV_DFLASH_N_TARGET_FEATURES,   hparams.dflash_n_target_features, false);
                 {
-                    const std::string key = ml.llm_kv(LLM_KV_DFLASH_TARGET_LAYER_IDS);
-                    const int kid = gguf_find_key(ml.metadata, key.c_str());
+                    std::string key = ml.llm_kv(LLM_KV_DFLASH_TARGET_LAYER_IDS);
+                    int kid = gguf_find_key(ml.metadata, key.c_str());
+                    if (kid < 0 && key.compare(0, 7, "dflash.") == 0) {
+                        key = "dflash-draft." + key.substr(7);
+                        kid = gguf_find_key(ml.metadata, key.c_str());
+                    }
+                    if (kid < 0 && key.compare(0, 13, "dflash-draft.") == 0) {
+                        // 35B GGUF: keys omit the arch prefix
+                        key = key.substr(13);
+                        kid = gguf_find_key(ml.metadata, key.c_str());
+                    }
                     if (kid >= 0) {
                         const size_t n = gguf_get_arr_n(ml.metadata, kid);
                         hparams.dflash_n_target_layers = std::min((uint32_t) n, (uint32_t) 8);
@@ -3003,6 +3011,9 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                         }
                     }
                 }
+                // compute target features from n_embd × n_target_layers instead of reading from metadata,
+                // since some GGUF files (e.g. 35B) have a stale value copied from the 27B model.
+                hparams.dflash_n_target_features = hparams.n_embd * hparams.dflash_n_target_layers;
                 // Optional SWA: when keys are absent, n_swa stays 0 and all layers use full attention
                 ml.get_key(LLM_KV_ATTENTION_SLIDING_WINDOW, hparams.n_swa, false);
                 if (hparams.n_swa > 0) {
@@ -7854,7 +7865,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                         auto & layer = layers[i];
 
                         layer.attn_norm      = create_tensor(tn(LLM_TENSOR_ATTN_NORM,      "weight", i), {n_embd}, 0);
-                        layer.attn_post_norm = create_tensor(tn(LLM_TENSOR_ATTN_POST_NORM, "weight", i), {n_embd}, 0);
+                        layer.attn_post_norm = create_tensor(tn(LLM_TENSOR_ATTN_POST_NORM, "weight", i), {n_embd}, TENSOR_NOT_REQUIRED);
 
                         layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q,   "weight", i), {n_embd, n_embd_head_k * n_head}, 0);
                         layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K,   "weight", i), {n_embd, n_embd_k_gqa}, 0);
@@ -7864,6 +7875,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                         layer.attn_q_norm = create_tensor(tn(LLM_TENSOR_ATTN_Q_NORM, "weight", i), {n_embd_head_k}, 0);
                         layer.attn_k_norm = create_tensor(tn(LLM_TENSOR_ATTN_K_NORM, "weight", i), {n_embd_head_k}, 0);
 
+                        layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, TENSOR_NOT_REQUIRED);
                         layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff}, 0);
                         layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd}, 0);
                         layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff}, 0);

@@ -403,6 +403,29 @@ namespace GGUFMeta {
 
         const bool found = GGUFMeta::GKV<T>::set(metadata, key, result, override);
 
+        if (!found && key.compare(0, 7, "dflash.") == 0) {
+            // Fallback: some DFlash GGUF files use "dflash-draft." prefix instead of "dflash."
+            const std::string alt = "dflash-draft." + key.substr(7);
+            const bool alt_found = GGUFMeta::GKV<T>::set(metadata, alt, result, override);
+            if (alt_found) {
+                return true;
+            }
+        }
+
+        if (!found && key.compare(0, 13, "dflash-draft.") == 0) {
+            // Fallback: 35B GGUF files use arch "dflash" instead of "dflash-draft"
+            // Two possible formats to try:
+            //   1. Replace "dflash-draft." with "dflash." (standard keys)
+            //   2. Strip "dflash-draft." entirely (DFlash namespace keys)
+            const std::string suffix = key.substr(13);
+            // Try "dflash.xxx" (e.g. "dflash-draft.context_length" → "dflash.context_length")
+            const std::string alt1 = "dflash." + suffix;
+            if (GGUFMeta::GKV<T>::set(metadata, alt1, result, override)) return true;
+            // Try "xxx" → only for DFlash namespace keys that already have "dflash." prefix
+            // e.g. "dflash-draft.dflash.block_size" → "dflash.block_size"
+            if (GGUFMeta::GKV<T>::set(metadata, suffix, result, override)) return true;
+        }
+
         if (required && !found) {
             throw std::runtime_error(format("key not found in model: %s", key.c_str()));
         }
@@ -438,6 +461,18 @@ namespace GGUFMeta {
         const int kid = gguf_find_key(metadata, key.c_str());
 
         if (kid < 0) {
+            if (key.compare(0, 7, "dflash.") == 0) {
+                const std::string alt = "dflash-draft." + key.substr(7);
+                return get_key_or_arr(alt, result, n, required);
+            }
+            if (key.compare(0, 13, "dflash-draft.") == 0) {
+                const std::string suffix = key.substr(13);
+                const std::string alt1 = "dflash." + suffix;
+                if (gguf_find_key(metadata, alt1.c_str()) >= 0) {
+                    return get_key_or_arr(alt1, result, n, required);
+                }
+                return get_key_or_arr(suffix, result, n, required);
+            }
             if (required) {
                 throw std::runtime_error(format("key not found in model: %s", key.c_str()));
             }
@@ -484,6 +519,19 @@ namespace GGUFMeta {
         const int id = gguf_find_key(metadata, key.c_str());
 
         if (id < 0) {
+            if (key.compare(0, 7, "dflash.") == 0) {
+                const std::string alt = "dflash-draft." + key.substr(7);
+                const int alt_id = gguf_find_key(metadata, alt.c_str());
+                if (alt_id >= 0) {
+                    if (gguf_get_kv_type(metadata, alt_id) == GGUF_TYPE_ARRAY) {
+                        if (required) {
+                            throw std::runtime_error(format("expected scalar, found array for key: %s", key.c_str()));
+                        }
+                        return false;
+                    }
+                    return get_key(alt, result, required);
+                }
+            }
             if (required) {
                 throw std::runtime_error(format("key not found in model: %s", key.c_str()));
             }
@@ -828,6 +876,19 @@ enum llm_arch llama_model_loader::get_arch() const {
 
 const llama_model_loader::llama_tensor_weight * llama_model_loader::get_weight(const char * name) const {
     auto pos = weights_map.find(name);
+    if (pos != weights_map.end()) {
+        return &pos->second;
+    }
+
+    // Fallback: DFlash tensor naming alias (support both "dflash_*" and unprefixed "*")
+    // Some GGUF files use "fc.weight" while others use "dflash_fc.weight"
+    std::string alt;
+    if (strncmp(name, "dflash_", 7) == 0) {
+        alt = name + 7;
+    } else {
+        alt = "dflash_" + std::string(name);
+    }
+    pos = weights_map.find(alt);
     if (pos != weights_map.end()) {
         return &pos->second;
     }

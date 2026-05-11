@@ -456,8 +456,8 @@ static const std::map<llm_tensor, const char *> LLM_TENSOR_NAMES = {
     { LLM_TENSOR_NEXTN_HNORM,                            "blk.%d.nextn.hnorm" },
     { LLM_TENSOR_NEXTN_SHARED_HEAD_HEAD,                 "blk.%d.nextn.shared_head_head" },
     { LLM_TENSOR_NEXTN_SHARED_HEAD_NORM,                 "blk.%d.nextn.shared_head_norm" },
-    { LLM_TENSOR_DFLASH_FC,                              "dflash_fc" },
-    { LLM_TENSOR_DFLASH_HIDDEN_NORM,                     "dflash_hidden_norm" },
+    { LLM_TENSOR_DFLASH_FC,                              "fc" },
+    { LLM_TENSOR_DFLASH_HIDDEN_NORM,                     "hidden_norm" },
     { LLM_TENSOR_ATTN_SUB_NORM,                          "blk.%d.attn_sub_norm" },
     { LLM_TENSOR_FFN_SUB_NORM,                           "blk.%d.ffn_sub_norm" },
     { LLM_TENSOR_DEC_OUTPUT_NORM,                        "dec.output_norm" },
@@ -832,6 +832,11 @@ llm_arch llm_arch_from_string(const std::string & name) {
         if (kv.second == name) {
             return kv.first;
         }
+    }
+
+    // Legacy alias: some DFlash draft GGUF files have arch "dflash" instead of "dflash-draft"
+    if (name == "dflash") {
+        return LLM_ARCH_DFLASH_DRAFT;
     }
 
     return LLM_ARCH_UNKNOWN;
